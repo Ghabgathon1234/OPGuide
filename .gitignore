@@ -1,0 +1,16 @@
+.env*
+!.env.example
+*service-account*.json
+*firebase-adminsdk*.json
+.publisher_settings.json
+.venv*/
+__pycache__/
+*.pyc
+*.sqlite3*
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Desktop source stays local; this repository deploys the backend only.
+/publisher/

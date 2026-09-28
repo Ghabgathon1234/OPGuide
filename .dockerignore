@@ -1,0 +1,6 @@
+*
+!backend/
+!backend/**
+!Dockerfile
+backend/**/__pycache__
+backend/tests
