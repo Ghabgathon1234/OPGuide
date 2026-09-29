@@ -37,8 +37,31 @@ stay on Railway. The updated desktop publisher remains in the local OperatorGuid
 reset an existing password. This update preserves previously changed passwords and
 removes the old forced-change flag. You may delete the unused BOOTSTRAP_TOKEN variable
 from Railway. Back up the volume: losing it reinitializes the configured initial hash.
-For deliberate lost-password recovery, stop the service, back up and remove the auth
-database, configure the desired initial hash, then redeploy. Bucket data is unaffected.
+For lost-password recovery, use the administrator command below; do not delete the database.
+
+## Administrator password recovery
+
+After deploying this version, open an interactive shell in the running backend using
+[Railway SSH](https://docs.railway.com/cli/ssh). In the Railway dashboard, right-click
+this service and choose **Copy SSH Command**, then run that command in your terminal.
+Inside the container run:
+
+```sh
+python /app/reset_password.py
+```
+
+Enter the new shared password (6–256 characters) twice. Input is hidden. The command
+requires Railway container access, not the forgotten publisher password. It replaces
+only the shared password hash and clears authentication lockout attempts in a single
+SQLite transaction. All publishers must use the new password for subsequent requests;
+no server restart is needed. Already-authorized operations may still finish.
+
+The database and bucket files remain intact. The tool refuses a missing database
+rather than creating one at the wrong location. It uses AUTH_DB_PATH and must run in
+the deployed container with the volume mounted, not `railway run` or `railway shell`
+(which execute locally). Passwords are never accepted as command arguments or printed.
+There is no public reset endpoint or reset button in the desktop app. No Railway
+variables need changing, and INITIAL_PASSWORD_HASH does not become a fallback password.
 
 ## API contract
 
