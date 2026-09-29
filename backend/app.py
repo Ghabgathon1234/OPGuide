@@ -24,6 +24,11 @@ from google.oauth2 import service_account
 from werkzeug.exceptions import HTTPException
 
 VERSION = re.compile(r"[0-9]{1,12}(?:\.[0-9]{1,12}){0,2}\Z")
+def version_key(value):
+    parts = [int(part) for part in value.split('.')]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
 HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=1)
 
 
@@ -248,7 +253,11 @@ def create_app(config=None, bucket=None):
         with mutation_lock:
             # Recheck after waiting: password may have been rotated during upload.
             auth.authenticate(request.form.get('password'))
-            current, _ = latest_metadata()
+            current, current_manifest = latest_metadata()
+            if current and current_manifest is None:
+                raise APIError('Cannot verify the live version. Repair latest.json before publishing.', 409)
+            if current_manifest and version_key(version) <= version_key(current_manifest['version']):
+                raise APIError(f"Version must be higher than the current live version {current_manifest['version']}.", 409)
             pdf_blob, index_blob = bucket.blob(pdf_path), bucket.blob(index_path)
             if get_blob(pdf_path) or get_blob(index_path):
                 raise APIError('Version already exists. Publish a new version.', 409)

@@ -87,7 +87,10 @@ download endpoints. The desktop refuses HTTP URLs and redirects.
   Only latest.json and versioned PDFs/indexes under RELEASE_ROOT can be deleted.
   Live files are protected unless latest.json is included explicitly to unpublish.
 
-Versions are immutable: an existing PDF or index returns 409. Use a fresh version.
+Versions must be numerically higher than the current live release. Lower or equivalent
+versions (for example 2 and 2.0) return 409 before any upload. An unreadable live
+manifest blocks publication until repaired. Versions are also immutable: an existing
+PDF or index returns 409. Use a fresh, higher version.
 The manifest is uploaded last using a GCS generation precondition. Failures can leave
 unreferenced PDF/index objects, but do not promote an incomplete release. Refresh,
 delete those orphans, and retry. Deletes can partially succeed; the error lists

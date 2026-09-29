@@ -251,3 +251,34 @@ def test_oversized_legacy_manifest_is_not_read(setup):
     response = c.post('/api/files/list', json={'password': PASSWORD})
     assert response.json['legacy_manifest'] is True
     assert b.reads == []
+
+
+@pytest.mark.parametrize('candidate', ['1', '2', '2.0', '2.0.0', '02'])
+def test_older_or_equal_release_never_changes_bucket(setup, candidate):
+    c, b, _ = setup
+    activate(c)
+    assert c.post('/api/releases', data=release('2')).status_code == 201
+    before = list(b.writes)
+    result = c.post('/api/releases', data=release(candidate))
+    assert result.status_code == 409
+    assert 'higher than' in result.json['error']
+    assert b.writes == before
+    assert c.post('/api/files/list', json={'password': PASSWORD}).json['manifest']['version'] == '2'
+
+
+def test_numeric_version_ordering_and_legacy_guard(setup):
+    c, b, _ = setup
+    activate(c)
+    assert c.post('/api/releases', data=release('2.9')).status_code == 201
+    b.objects['operator-guide/latest.json'].metadata = None
+    assert c.post('/api/releases', data=release('2.8')).status_code == 409
+    assert c.post('/api/releases', data=release('2.10')).status_code == 201
+
+
+def test_unknown_live_version_blocks_publication(setup):
+    c, b, _ = setup
+    activate(c)
+    b.blob('operator-guide/latest.json').save('{}', 0)
+    before = list(b.writes)
+    assert c.post('/api/releases', data=release('3')).status_code == 409
+    assert b.writes == before
