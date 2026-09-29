@@ -8,7 +8,6 @@ from google.api_core.exceptions import PreconditionFailed
 from app import create_app, HASHER
 
 PASSWORD = 'a long private test password'
-TOKEN = 'test-bootstrap-token-' + 'x' * 32
 
 class Blob:
     def __init__(self, bucket, name):
@@ -58,13 +57,13 @@ class Bucket:
 def setup(tmp_path):
     bucket = Bucket()
     config = dict(TESTING=True, AUTH_DB_PATH=str(tmp_path / 'auth.db'),
-                  INITIAL_PASSWORD_HASH=HASHER.hash('652512'), BOOTSTRAP_TOKEN=TOKEN)
+                  INITIAL_PASSWORD_HASH=HASHER.hash('652512'))
     app = create_app(config, bucket)
     client = app.test_client()
     return client, bucket, config
 
 def activate(client):
-    response = client.post('/api/auth/password', json=dict(password='652512', new_password=PASSWORD, bootstrap_token=TOKEN))
+    response = client.post('/api/auth/password', json=dict(password='652512', new_password=PASSWORD))
     assert response.status_code == 200
 
 def release(version='3', index=True):
@@ -79,14 +78,18 @@ def release(version='3', index=True):
     files['manifest'] = (io.BytesIO(json.dumps(manifest).encode()), 'latest.json')
     return files
 
-def test_initial_password_requires_change_and_bootstrap(setup):
+def test_initial_password_works_until_changed(setup):
     c, b, _ = setup
-    assert c.post('/api/files/list', json={'password': '652512'}).status_code == 403
-    assert c.post('/api/auth/check', json={'password': '652512'}).json['must_change_password']
-    assert c.post('/api/auth/password', json=dict(password='652512', new_password=PASSWORD)).status_code == 403
+    assert c.post('/api/files/list', json={'password': '652512'}).status_code == 200
+    assert not c.post('/api/auth/check', json={'password': '652512'}).json['must_change_password']
+    files = release()
+    files['password'] = '652512'
+    assert c.post('/api/releases', data=files).status_code == 201
+    assert c.post('/api/files/delete', json=dict(password='652512', paths=['operator-guide/latest.json'])).status_code == 200
     activate(c)
-    assert not c.post('/api/auth/check', json={'password': PASSWORD}).json['must_change_password']
-    assert not b.writes
+    assert c.post('/api/files/list', json={'password': '652512'}).status_code == 401
+    assert c.post('/api/files/list', json={'password': PASSWORD}).status_code == 200
+
 
 def test_rotation_persists_and_old_password_fails(setup):
     c, b, config = setup
@@ -199,6 +202,20 @@ def test_password_length_boundaries(setup, length, expected):
 
 def test_initial_setup_accepts_six_characters(setup):
     c, _, _ = setup
-    response = c.post('/api/auth/password', json=dict(password='652512', new_password='abc123', bootstrap_token=TOKEN))
+    response = c.post('/api/auth/password', json=dict(password='652512', new_password='abc123'))
     assert response.status_code == 200
     assert c.post('/api/files/list', json={'password': 'abc123'}).status_code == 200
+
+
+def test_migration_preserves_single_existing_password(setup):
+    import sqlite3
+    c, b, config = setup
+    activate(c)
+    with sqlite3.connect(config['AUTH_DB_PATH']) as db:
+        db.execute('UPDATE auth SET must_change=1 WHERE id=1')
+    restarted = create_app(config, b).test_client()
+    assert restarted.post('/api/files/list', json={'password': PASSWORD}).status_code == 200
+    assert restarted.post('/api/files/list', json={'password': '652512'}).status_code == 401
+    assert restarted.post('/api/auth/password', json=dict(password='wrong-old', new_password='abc123')).status_code == 401
+    assert restarted.post('/api/files/list', json={'password': 'abc123'}).status_code == 401
+    assert restarted.post('/api/files/list', json={'password': PASSWORD}).status_code == 200

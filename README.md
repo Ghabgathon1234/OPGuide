@@ -18,27 +18,27 @@ stay on Railway. The updated desktop publisher remains in the local OperatorGuid
    - `INITIAL_PASSWORD_HASH`: an Argon2id hash for the initial password `652512`.
      Generate it with `python backend/hash_password.py` after installing backend
      dependencies. Paste the entire output, including dollar signs.
-   - `BOOTSTRAP_TOKEN`: a random setup secret of at least 32 characters, generated
-     with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`.
    - `AUTH_DB_PATH`: `/data/auth.sqlite3`.
    - `RELEASE_ROOT`: `operator-guide` (optional; default).
    - `MAX_UPLOAD_MB`: `250` (optional; total multipart request limit, default 250 MiB).
 
    Railway supplies `PORT`; do not set it manually. The server binds to `0.0.0.0`.
 4. Generate a Railway public HTTPS domain. Open `/health` to verify startup.
-5. Run the publisher, use the configured HTTPS address and initial password `652512`, then click
-   **Change password**. Choose a new password of at least 6 characters and provide
-   `BOOTSTRAP_TOKEN` from Railway when prompted. Connect using the new password.
-   The initial password cannot list, upload or delete anything.
-6. Subsequent password changes need only the current password; leave the bootstrap
-   prompt blank. Passwords are kept only in desktop process memory and must be entered
-   each launch. The backend stores a salted Argon2id hash on the volume.
+5. Run the publisher and enter initial password `652512`. It works immediately for
+   listing, publishing and deletion. Changing it is optional.
+6. To change the password, enter the current password in the publisher, click
+   **Change password**, and enter/confirm a new password of 6–256 characters.
+   No setup token is required. There is exactly **one shared password**: changing
+   it replaces the old password for all publishers. The initial password is not
+   retained as a fallback. Passwords stay only in desktop process memory; the backend
+   stores a salted Argon2id hash on the persistent volume.
 
 `INITIAL_PASSWORD_HASH` only seeds a new database. Changing that variable does not
-reset an existing password. Back up the volume; losing it resets authentication to
-bootstrap mode. For a deliberate lost-password recovery, stop the service, back up
-and remove the auth database, configure a NEW bootstrap token and initial password
-hash, then redeploy and repeat setup. No bucket data needs to be deleted.
+reset an existing password. This update preserves previously changed passwords and
+removes the old forced-change flag. You may delete the unused BOOTSTRAP_TOKEN variable
+from Railway. Back up the volume: losing it reinitializes the configured initial hash.
+For deliberate lost-password recovery, stop the service, back up and remove the auth
+database, configure the desired initial hash, then redeploy. Bucket data is unaffected.
 
 ## API contract
 
@@ -48,9 +48,8 @@ download endpoints. The desktop refuses HTTP URLs and redirects.
 
 - `GET /health`: public liveness status only.
 - `POST /api/auth/check`: JSON `{password}`; returns connection info and whether the
-  password must be changed.
-- `POST /api/auth/password`: JSON `{password, new_password, bootstrap_token}`;
-  bootstrap_token is required only for initial setup.
+  password must be changed (always false; retained for client compatibility).
+- `POST /api/auth/password`: JSON `{password, new_password}`; verifies the current password and replaces its hash.
 - `POST /api/files/list`: JSON `{password}`; read-only **get/list operation** returning
   names, sizes, updated dates, filename versions and current-release metadata.
   POST keeps the password in the encrypted payload. No object contents are downloaded,

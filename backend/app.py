@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-import secrets
 import threading
 import time
 
@@ -34,25 +33,24 @@ class APIError(Exception):
 
 
 class AuthStore:
-    def __init__(self, path, initial_hash, bootstrap_token):
-        self.bootstrap_token = bootstrap_token
+    def __init__(self, path, initial_hash):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS auth (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, must_change INTEGER NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS attempts (at REAL NOT NULL)')
             if not db.execute('SELECT 1 FROM auth WHERE id=1').fetchone():
-                if len(bootstrap_token) < 32:
-                    raise RuntimeError('Set BOOTSTRAP_TOKEN to a random secret of at least 32 characters')
                 if not initial_hash or not initial_hash.startswith('$argon2id$'):
                     raise RuntimeError('Set INITIAL_PASSWORD_HASH to an Argon2id hash before first startup')
-                db.execute('INSERT INTO auth VALUES (1, ?, 1)', (initial_hash,))
+                db.execute('INSERT INTO auth VALUES (1, ?, 0)', (initial_hash,))
+            # Migrate existing installations without changing the current password.
+            db.execute('UPDATE auth SET must_change=0 WHERE id=1')
         os.chmod(path, 0o600)
 
     def connect(self):
         return sqlite3.connect(self.path, timeout=30)
 
-    def authenticate(self, password, allow_initial=False, new_password=None, bootstrap_token=None):
+    def authenticate(self, password, new_password=None):
         if not isinstance(password, str) or not 1 <= len(password) <= 256:
             raise APIError('Password required', 401)
         # Global limit is persisted and cannot be bypassed with forged IP headers.
@@ -65,21 +63,17 @@ class AuthStore:
             attempt = db.execute('INSERT INTO attempts VALUES (?)', (time.time(),)).lastrowid
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            stored, must_change = db.execute('SELECT hash, must_change FROM auth WHERE id=1').fetchone()
+            stored = db.execute('SELECT hash FROM auth WHERE id=1').fetchone()[0]
             try:
                 HASHER.verify(stored, password)
             except (VerificationError, InvalidHashError):
                 raise APIError('Invalid password', 401) from None
             db.execute('DELETE FROM attempts WHERE rowid=?', (attempt,))
-            if must_change and not allow_initial:
-                raise APIError('Change the initial password before using the bucket', 403)
             if new_password is not None:
-                if must_change and (not isinstance(bootstrap_token, str) or not secrets.compare_digest(bootstrap_token, self.bootstrap_token)):
-                    raise APIError("Initial setup requires the Railway BOOTSTRAP_TOKEN", 403)
                 if not isinstance(new_password, str) or not 6 <= len(new_password) <= 256 or new_password == password:
                     raise APIError('Choose a different password of 6–256 characters')
                 db.execute('UPDATE auth SET hash=?, must_change=0 WHERE id=1', (HASHER.hash(new_password),))
-            return bool(must_change)
+            return False
 
 
 def create_app(config=None, bucket=None):
@@ -90,7 +84,6 @@ def create_app(config=None, bucket=None):
         MAX_FORM_PARTS=10,
         AUTH_DB_PATH=os.getenv('AUTH_DB_PATH', '/data/auth.sqlite3'),
         INITIAL_PASSWORD_HASH=os.getenv('INITIAL_PASSWORD_HASH', ''),
-        BOOTSTRAP_TOKEN=os.getenv('BOOTSTRAP_TOKEN', ''),
         RELEASE_ROOT=os.getenv('RELEASE_ROOT', 'operator-guide'),
     )
     if config:
@@ -98,7 +91,7 @@ def create_app(config=None, bucket=None):
     root = app.config['RELEASE_ROOT']
     if not re.fullmatch(r'[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*', root):
         raise RuntimeError('Invalid RELEASE_ROOT')
-    auth = AuthStore(app.config['AUTH_DB_PATH'], app.config['INITIAL_PASSWORD_HASH'], app.config['BOOTSTRAP_TOKEN'])
+    auth = AuthStore(app.config['AUTH_DB_PATH'], app.config['INITIAL_PASSWORD_HASH'])
     if bucket is None:
         info = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
         credentials = service_account.Credentials.from_service_account_info(info)
@@ -162,7 +155,7 @@ def create_app(config=None, bucket=None):
 
     @app.post('/api/auth/check')
     def check():
-        required = auth.authenticate(payload().get('password'), allow_initial=True)
+        required = auth.authenticate(payload().get('password'))
         return jsonify(must_change_password=required, bucket_name=bucket.name, release_root=root)
 
     @app.post('/api/auth/password')
@@ -171,7 +164,7 @@ def create_app(config=None, bucket=None):
         if not isinstance(data.get('new_password'), str):
             raise APIError('New password required')
         with mutation_lock:
-            auth.authenticate(data.get('password'), allow_initial=True, new_password=data['new_password'], bootstrap_token=data.get('bootstrap_token'))
+            auth.authenticate(data.get('password'), new_password=data['new_password'])
         return jsonify(changed=True)
 
     @app.post('/api/files/list')
