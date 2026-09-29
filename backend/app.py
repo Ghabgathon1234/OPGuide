@@ -76,8 +76,8 @@ class AuthStore:
             if new_password is not None:
                 if must_change and (not isinstance(bootstrap_token, str) or not secrets.compare_digest(bootstrap_token, self.bootstrap_token)):
                     raise APIError("Initial setup requires the Railway BOOTSTRAP_TOKEN", 403)
-                if not isinstance(new_password, str) or not 15 <= len(new_password) <= 256 or new_password == password:
-                    raise APIError('Choose a different password of 15–256 characters')
+                if not isinstance(new_password, str) or not 6 <= len(new_password) <= 256 or new_password == password:
+                    raise APIError('Choose a different password of 6–256 characters')
                 db.execute('UPDATE auth SET hash=?, must_change=0 WHERE id=1', (HASHER.hash(new_password),))
             return bool(must_change)
 

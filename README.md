@@ -26,8 +26,8 @@ stay on Railway. The updated desktop publisher remains in the local OperatorGuid
 
    Railway supplies `PORT`; do not set it manually. The server binds to `0.0.0.0`.
 4. Generate a Railway public HTTPS domain. Open `/health` to verify startup.
-5. Run the publisher, enter that HTTPS URL and initial password `652512`, then click
-   **Change password**. Choose a new password of at least 15 characters and provide
+5. Run the publisher, use the configured HTTPS address and initial password `652512`, then click
+   **Change password**. Choose a new password of at least 6 characters and provide
    `BOOTSTRAP_TOKEN` from Railway when prompted. Connect using the new password.
    The initial password cannot list, upload or delete anything.
 6. Subsequent password changes need only the current password; leave the bootstrap

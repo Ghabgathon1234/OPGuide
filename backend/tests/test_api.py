@@ -182,3 +182,23 @@ def test_delete_partial_failure_is_reported(setup):
     assert result.status_code == 502
     assert result.json['deleted'] == ['operator-guide/latest.json']
     assert b.fail_path in b.objects
+
+@pytest.mark.parametrize('length,expected', [(5, 400), (6, 200), (256, 200), (257, 400)])
+def test_password_length_boundaries(setup, length, expected):
+    c, _, _ = setup
+    activate(c)
+    new = 'a' * length
+    response = c.post('/api/auth/password', json=dict(password=PASSWORD, new_password=new))
+    assert response.status_code == expected
+    if expected == 200:
+        assert c.post('/api/files/list', json={'password': new}).status_code == 200
+        assert c.post('/api/auth/check', json={'password': PASSWORD}).status_code == 401
+    else:
+        assert c.post('/api/auth/check', json={'password': PASSWORD}).status_code == 200
+
+
+def test_initial_setup_accepts_six_characters(setup):
+    c, _, _ = setup
+    response = c.post('/api/auth/password', json=dict(password='652512', new_password='abc123', bootstrap_token=TOKEN))
+    assert response.status_code == 200
+    assert c.post('/api/files/list', json={'password': 'abc123'}).status_code == 200
