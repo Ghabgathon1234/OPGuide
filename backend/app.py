@@ -113,9 +113,35 @@ def create_app(config=None, bucket=None):
         blob = get_blob(latest_path)
         if blob is None:
             return None, None
-        # Only GCS object metadata is read. No download_as_* methods anywhere.
         encoded = (blob.metadata or {}).get('release_manifest')
-        return blob, json.loads(encoded) if encoded else None
+        if not encoded:
+            # Legacy publishers wrote the version only inside latest.json.
+            # Read this bounded manifest on the server, never a PDF or index.
+            if blob.size is None or blob.size > 16384:
+                return blob, None
+            encoded = blob.download_as_bytes(
+                start=0, end=16384, if_generation_match=int(blob.generation), timeout=30,
+            )
+        try:
+            manifest = json.loads(encoded)
+            if not isinstance(manifest, dict):
+                return blob, None
+            version = manifest.get('version')
+            if not isinstance(version, str) or not VERSION.fullmatch(version):
+                return blob, None
+            if (manifest.get('documentPath') != f'{root}/documents/{version}.pdf'
+                    or type(manifest.get('sizeBytes')) is not int or manifest['sizeBytes'] < 1024
+                    or not isinstance(manifest.get('sha256'), str)
+                    or not re.fullmatch(r'[0-9a-fA-F]{64}', manifest['sha256'])):
+                return blob, None
+            if manifest.get('indexPath') is not None:
+                if (manifest['indexPath'] != f'{root}/documents/{version}.index.json'
+                        or not isinstance(manifest.get('indexSha256'), str)
+                        or not re.fullmatch(r'[0-9a-fA-F]{64}', manifest['indexSha256'])):
+                    return blob, None
+            return blob, manifest
+        except (ValueError, UnicodeError):
+            return blob, None
 
     def read_json(upload, limit):
         raw = upload.read(limit + 1)

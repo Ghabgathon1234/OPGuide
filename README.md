@@ -75,8 +75,9 @@ download endpoints. The desktop refuses HTTP URLs and redirects.
 - `POST /api/auth/password`: JSON `{password, new_password}`; verifies the current password and replaces its hash.
 - `POST /api/files/list`: JSON `{password}`; read-only **get/list operation** returning
   names, sizes, updated dates, filename versions and current-release metadata.
-  POST keeps the password in the encrypted payload. No object contents are downloaded,
-  including by the backend. Only objects under RELEASE_ROOT are listed.
+  POST keeps the password in the encrypted payload. No file contents are returned to the frontend. The backend reads only latest.json
+  (at most 16 KiB) for older releases lacking custom metadata. PDFs and indexes are
+  never downloaded. Only objects under RELEASE_ROOT are listed.
 - `POST /api/releases`: multipart `password`, `pdf`, `manifest` (latest.json), and
   optional `index` (search-index JSON). One release uploads all required files.
   Server verifies version, exact object paths, byte count and SHA-256 hashes, and index
@@ -94,10 +95,10 @@ completed deletions. Refresh before retrying. Never bypass the backend with anot
 publisher while a release is in progress; preconditions detect individual-object
 conflicts, but GCS has no multi-object transaction.
 
-The current version is stored as custom metadata on latest.json. **Legacy releases
-have no such metadata:** the list marks the live version unknown until the next
-successful release. The backend intentionally does not download the old JSON to
-infer the version. Old-file cleanup is disabled while the live version is unknown.
+The current version is stored as custom metadata on latest.json. For legacy releases,
+the backend reads and validates only the small latest.json body, with a 16 KiB limit
+and generation precondition. If malformed or oversized, the current version remains
+unknown and live-file deletion stays protected. No bucket objects are modified by listing.
 
 The desktop currently generates version and search JSON from the selected PDF and
 uploads them together, preserving the Flutter app's existing manifest schema and
@@ -145,7 +146,7 @@ python -m venv .venv
 PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q
 ```
 
-Tests use a fake bucket and forbid download methods. No tests write to a real bucket.
+Tests use a fake bucket and allow bounded legacy manifest reads only. No tests write to a real bucket.
 See the local publisher README for the desktop app. Railway deployment and live GCS access
 must be verified after you configure the secrets and volume.
 

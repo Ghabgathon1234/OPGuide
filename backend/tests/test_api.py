@@ -22,6 +22,7 @@ class Blob:
         if self.name == self.bucket.fail_path:
             raise RuntimeError('injected storage failure')
         self.generation = (old.generation if old else 0) + 1
+        self.data = data.encode() if isinstance(data, str) else data
         self.size = len(data)
         self.bucket.objects[self.name] = self
         self.bucket.writes.append(self.name)
@@ -39,6 +40,13 @@ class Blob:
             raise PreconditionFailed('generation mismatch')
         del self.bucket.objects[self.name]
 
+    def download_as_bytes(self, *, start, end, if_generation_match, timeout):
+        assert self.name == 'operator-guide/latest.json', 'Only legacy manifest may be read'
+        assert start == 0 and end == 16384
+        assert self.generation == if_generation_match
+        self.bucket.reads.append(self.name)
+        return self.data[start:end + 1]
+
     def download_as_text(self, **kwargs):
         raise AssertionError('Downloads are forbidden')
 
@@ -46,6 +54,7 @@ class Bucket:
     name = 'test-bucket'
     def __init__(self):
         self.objects, self.writes, self.fail_path = {}, [], None
+        self.reads = []
     def get_blob(self, name, **kwargs):
         return self.objects.get(name)
     def blob(self, name):
@@ -107,6 +116,7 @@ def test_listing_and_publish_no_downloads(setup):
     assert b.writes[-1] == 'operator-guide/latest.json'
     result = c.post('/api/files/list', json={'password': PASSWORD}).json
     assert result['manifest']['version'] == '3'
+    assert b.reads == []
     assert len(result['objects']) == 3
     assert result['objects'][0]['version'] == '3'
     assert c.get('/api/files/operator-guide/documents/3.pdf').status_code == 404
@@ -219,3 +229,25 @@ def test_migration_preserves_single_existing_password(setup):
     assert restarted.post('/api/auth/password', json=dict(password='wrong-old', new_password='abc123')).status_code == 401
     assert restarted.post('/api/files/list', json={'password': 'abc123'}).status_code == 401
     assert restarted.post('/api/files/list', json={'password': PASSWORD}).status_code == 200
+
+
+def test_legacy_manifest_supplies_real_live_version_and_protects_pdf(setup):
+    c, b, _ = setup
+    activate(c)
+    assert c.post('/api/releases', data=release('2')).status_code == 201
+    b.objects['operator-guide/latest.json'].metadata = None
+    response = c.post('/api/files/list', json={'password': PASSWORD})
+    assert response.status_code == 200
+    assert response.json['manifest']['version'] == '2'
+    assert response.json['legacy_manifest'] is False
+    assert b.reads == ['operator-guide/latest.json']
+    assert c.post('/api/files/delete', json=dict(password=PASSWORD, paths=['operator-guide/documents/2.pdf'])).status_code == 409
+
+
+def test_oversized_legacy_manifest_is_not_read(setup):
+    c, b, _ = setup
+    activate(c)
+    b.blob('operator-guide/latest.json').save('x' * 16385, 0)
+    response = c.post('/api/files/list', json={'password': PASSWORD})
+    assert response.json['legacy_manifest'] is True
+    assert b.reads == []
